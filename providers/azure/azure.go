@@ -12,6 +12,7 @@ import (
 	"github.com/Azure/go-autorest/autorest/to"
 	log "github.com/zoumo/logdog"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 
@@ -32,6 +33,7 @@ type AzureProvider struct {
 	// old azure lb azure spec
 	oldAzureProvider *lbapi.AzureProvider
 	nodes            []string
+	oldAppGateway    string
 
 	// load balancer rules cache
 	tcpRuleMap map[string]string
@@ -72,6 +74,14 @@ func (l *AzureProvider) setCacheReserveStatus(reserve *bool) {
 	l.oldAzureProvider.ReserveAzure = reserve
 }
 
+func (l *AzureProvider) setCacheAzureAppGateway(ag string) {
+	l.oldAppGateway = ag
+}
+
+func (l *AzureProvider) setCacheNodes(nodes []string) {
+	l.nodes = nodes
+}
+
 func hasAzureFinalizer(lb *lbapi.LoadBalancer) bool {
 	for _, v := range lb.Finalizers {
 		if v == azureFinalizer {
@@ -85,6 +95,15 @@ func hasAzureFinalizer(lb *lbapi.LoadBalancer) bool {
 func (l *AzureProvider) OnUpdate(lb *lbapi.LoadBalancer) error {
 
 	log.Infof("OnUpdate......")
+
+	if lb.ObjectMeta.Annotations[APPGATEWAY] != "" && lb.ObjectMeta.Annotations[APPGATEWAY] != l.oldAppGateway || !reflect.DeepEqual(l.nodes, lb.Spec.Nodes.Names) {
+		l.updateAzureAppGateway(lb)
+	}
+	l.setCacheAzureAppGateway(lb.ObjectMeta.Annotations[APPGATEWAY_NAME])
+	l.setCacheNodes(lb.Spec.Nodes.Names)
+	
+	log.Info("nodes", l.nodes)
+	log.Info("appgatway", l.oldAppGateway)
 	if lb.Spec.Providers.Azure == nil {
 		return l.cleanupAzureLB(nil, false)
 	}
@@ -136,6 +155,7 @@ func (l *AzureProvider) updateCacheData(lb *lbapi.LoadBalancer, tcp, udp map[str
 	l.nodes = lb.Spec.Nodes.Names
 	l.tcpRuleMap = tcp
 	l.udpRuleMap = udp
+	l.oldAppGateway = lb.ObjectMeta.Annotations[APPGATEWAY_NAME]
 }
 
 // Start ...
@@ -463,6 +483,65 @@ func (l *AzureProvider) cleanupAzureLB(lb *lbapi.LoadBalancer, deleteLB bool) er
 		l.cleanAzure = true
 	}
 	return err
+}
+
+// update azure application gateway
+func (l *AzureProvider) updateAzureAppGateway(lb *lbapi.LoadBalancer) error {
+	c, err := client.NewClient(&l.storeLister)
+	if err != nil {
+		log.Errorf("init client error %v", err)
+		return err
+	}
+
+	if lb.ObjectMeta.Annotations[APPGATEWAY] == "false" {
+		err := deleteAppGatewayBackendPool(c, lb.ObjectMeta.Annotations[RESOURCE_GROUP], l.oldAppGateway, lb.Name)
+		if err != nil {
+			log.Errorf("delete application gateway backend pool error %v", err)
+		}
+		return err
+		lb.ObjectMeta.Annotations[APPGATEWAY] = ""
+		lb.ObjectMeta.Annotations[APPGATEWAY_NAME] = ""
+		lb.ObjectMeta.Annotations[RESOURCE_GROUP] = ""
+		_, err = l.clientset.LoadbalanceV1alpha2().LoadBalancers(lb.Namespace).Update(lb)
+	}
+
+	var nodeip []network.ApplicationGatewayBackendAddress
+	for _, node := range lb.Spec.Nodes.Names {
+		node, err := l.clientset.CoreV1().Nodes().Get(node, metav1.GetOptions{})
+		if err != nil {
+			log.Errorf("get node error %v", err)
+			return err
+		}
+		nodeip = append(nodeip, network.ApplicationGatewayBackendAddress{
+			IPAddress: &node.Status.Addresses[0].Address,
+		})
+	}
+
+	if l.oldAppGateway != "" && l.oldAppGateway != lb.ObjectMeta.Annotations[APPGATEWAY_NAME] {
+		err := deleteAppGatewayBackendPool(c, lb.ObjectMeta.Annotations[RESOURCE_GROUP], l.oldAppGateway, lb.Name)
+		if err != nil {
+			log.Errorf("delete application gateway backend pool error %v", err)
+		}
+		err = addAppGatewayBackendPool(c, nodeip, lb.ObjectMeta.Annotations[RESOURCE_GROUP], lb.ObjectMeta.Annotations[APPGATEWAY_NAME], lb.Name)
+		if err != nil {
+			log.Errorf("add application gateway backend pool error %v", err)
+		}
+		return err
+	}
+
+	if !reflect.DeepEqual(l.nodes, lb.Spec.Nodes.Names) {
+		err = updateAppGatewayBackendPoolIP(c, nodeip, lb.ObjectMeta.Annotations[RESOURCE_GROUP], lb.ObjectMeta.Annotations[APPGATEWAY_NAME], lb.Name)
+		if err != nil {
+			log.Errorf("add application gateway backend pool error %v", err)
+		}
+		return err
+	}
+
+	err = addAppGatewayBackendPool(c, nodeip, lb.ObjectMeta.Annotations[RESOURCE_GROUP], lb.ObjectMeta.Annotations[APPGATEWAY_NAME], lb.Name)
+	if err != nil {
+		log.Errorf("add application gateway backend pool error %v", err)
+	}
+	return nil
 }
 
 func cleanUpSecurityGroup(c *client.Client, groupName, lbName string) error {

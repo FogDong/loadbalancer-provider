@@ -172,7 +172,8 @@ func (p *GenericProvider) updateLoadBalancer(oldObj, curObj interface{}) {
 		reflect.DeepEqual(old.Finalizers, cur.Finalizers) &&
 		reflect.DeepEqual(old.DeletionTimestamp, cur.DeletionTimestamp) &&
 		reflect.DeepEqual(old.Status.ProxyStatus.TCPConfigMap, cur.Status.ProxyStatus.TCPConfigMap) &&
-		reflect.DeepEqual(old.Status.ProxyStatus.UDPConfigMap, cur.Status.ProxyStatus.UDPConfigMap) {
+		reflect.DeepEqual(old.Status.ProxyStatus.UDPConfigMap, cur.Status.ProxyStatus.UDPConfigMap) &&
+		reflect.DeepEqual(old.ObjectMeta.Annotations, cur.ObjectMeta.Annotations) {
 		return
 	}
 
