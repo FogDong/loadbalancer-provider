@@ -22,6 +22,7 @@ import (
 	"github.com/caicloud/clientset/listers/resource/v1beta1"
 	lbapi "github.com/caicloud/clientset/pkg/apis/loadbalance/v1alpha2"
 	v1listers "k8s.io/client-go/listers/core/v1"
+	iglisters "k8s.io/client-go/listers/extensions/v1beta1"
 )
 
 // Provider holds the methods to handle an Provider backend
@@ -60,6 +61,7 @@ type StoreLister struct {
 	LoadBalancer lblisters.LoadBalancerLister
 	Node         v1listers.NodeLister
 	ConfigMap    v1listers.ConfigMapLister
+	Ingress      iglisters.IngressLister
 	Secret       v1listers.SecretLister
 	Machine      v1beta1.MachineLister
 }
@@ -72,4 +74,5 @@ type Configuration struct {
 	LoadBalancerNamespace string
 	TCPConfigMap          string
 	UDPConfigMap          string
+	IngressClass          string
 }
