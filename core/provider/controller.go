@@ -176,7 +176,6 @@ func (p *GenericProvider) updateLoadBalancer(oldObj, curObj interface{}) {
 	}
 
 	// ignore change of status
-	APPGATEWAY_NAME := "loadbalance.caicloud.io/azureAppGatewayName"
 	if reflect.DeepEqual(old.Spec, cur.Spec) &&
 		reflect.DeepEqual(old.Finalizers, cur.Finalizers) &&
 		reflect.DeepEqual(old.DeletionTimestamp, cur.DeletionTimestamp) &&
@@ -305,7 +304,7 @@ func (p *GenericProvider) filterConfigMap(cm *v1.ConfigMap) bool {
 }
 
 func (p *GenericProvider) filterIngress(ig *v1beta1.Ingress) bool {
-	if ig.ObjectMeta.Annotations["kubernetes.io/ingress.class"] == p.cfg.IngressClass {
+	if ig.ObjectMeta.Annotations[INGRESS_CLASS] == p.cfg.IngressClass {
 		return false
 	}
 	return true

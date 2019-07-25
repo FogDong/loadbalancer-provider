@@ -39,7 +39,7 @@ type AzureProvider struct {
 	nodes            []string
 	oldAppGateway    string
 	oldResourceGroup string
-	ingressesLen     int
+	ingressesNum     int
 
 	// load balancer rules cache
 	tcpRuleMap map[string]string
@@ -88,8 +88,8 @@ func (l *AzureProvider) setCacheAzureResourceGroup(rg string) {
 	l.oldResourceGroup = rg
 }
 
-func (l *AzureProvider) setCacheAzureIngressesLen(len int) {
-	l.ingressesLen = len
+func (l *AzureProvider) setCacheAzureingressesNum(len int) {
+	l.ingressesNum = len
 }
 
 func (l *AzureProvider) setCacheNodes(nodes []string) {
@@ -109,25 +109,24 @@ func hasAzureFinalizer(lb *lbapi.LoadBalancer) bool {
 func (l *AzureProvider) OnUpdate(lb *lbapi.LoadBalancer) error {
 
 	log.Infof("OnUpdate......")
-	log.Info(lb.ObjectMeta.Annotations[APPGATEWAY], lb.ObjectMeta.Annotations[APPGATEWAY_NAME], l.oldAppGateway, reflect.DeepEqual(l.nodes, lb.Spec.Nodes.Names))
 
-	if lb.Annotations[BACKENDPOOL_STATUS] != "" &&
-		lb.Annotations[BACKENDPOOL_STATUS] != "Success" &&
-		lb.Annotations[BACKENDPOOL_STATUS] != "Error" &&
+	nlb := lb.DeepCopy()
+	agStatus := lb.Annotations[BACKENDPOOL_STATUS]
+	if agStatus != "" && agStatus != "Success" && agStatus != "Error" &&
 		(lb.Annotations[APPGATEWAY_NAME] != l.oldAppGateway || !reflect.DeepEqual(l.nodes, lb.Spec.Nodes.Names)) {
-		l.updateAzureAppGateway(lb)
+		l.updateAzureAppGateway(nlb)
 	}
 
-	ig, err := l.filterIngress(lb)
+	ing, err := l.filterIngress(lb)
 	if err != nil {
 		return err
 	}
-	if len(ig) != l.ingressesLen && lb.Annotations[APPGATEWAY] == "true" {
-		l.updateIngress(ig, lb, nil)
+	if len(ing) != l.ingressesNum && lb.Annotations[APPGATEWAY] == "true" {
+		l.updateIngress(ing, nlb, nil)
 	} else if lb.Annotations[APPGATEWAY] == "true" {
-		fig := l.filterFinalizerIngress(ig)
-		if fig != nil {
-			l.updateIngress(ig, lb, fig)
+		fing := l.filterFinalizerIngress(ing)
+		if fing != nil {
+			l.updateIngress(ing, nlb, fing)
 		}
 	}
 
@@ -165,26 +164,24 @@ func (l *AzureProvider) OnUpdate(lb *lbapi.LoadBalancer) error {
 		return err
 	}
 
-	nlb := lb.DeepCopy()
-
 	azlb, ip, err := l.ensureSync(nlb, tcp, udp)
 
 	l.updateLoadBalancerAzureStatus(azlb, lb, ip, err)
 	if err == nil {
 		log.Infof("update cache data %v tcp %v udp %v", nlb.Spec.Providers.Azure, tcp, udp)
-		l.updateCacheData(nlb, tcp, udp, len(ig))
+		l.updateCacheData(nlb, tcp, udp, len(ing))
 	}
 	return err
 }
 
-func (l *AzureProvider) updateCacheData(lb *lbapi.LoadBalancer, tcp, udp map[string]string, ig int) {
+func (l *AzureProvider) updateCacheData(lb *lbapi.LoadBalancer, tcp, udp map[string]string, ing int) {
 	l.oldAzureProvider = lb.Spec.Providers.Azure
 	l.nodes = lb.Spec.Nodes.Names
 	l.tcpRuleMap = tcp
 	l.udpRuleMap = udp
 	l.oldAppGateway = lb.ObjectMeta.Annotations[APPGATEWAY_NAME]
 	l.oldResourceGroup = lb.ObjectMeta.Annotations[RESOURCE_GROUP]
-	l.ingressesLen = ig
+	l.ingressesNum = ing
 }
 
 // Start ...
@@ -315,7 +312,7 @@ func (l *AzureProvider) getProxyConfigMapAndCompare(lb *lbapi.LoadBalancer) (map
 	return tcpCm.Data, udpCm.Data, false, nil
 }
 
-// filter all namespace ingress
+// filterIngress filter ingresses in all namespace
 func (l *AzureProvider) filterIngress(lb *lbapi.LoadBalancer) ([]*v1beta1.Ingress, error) {
 	ingresses, err := l.storeLister.Ingress.Ingresses(v1.NamespaceAll).List(labels.Everything())
 	if err != nil {
@@ -324,28 +321,28 @@ func (l *AzureProvider) filterIngress(lb *lbapi.LoadBalancer) ([]*v1beta1.Ingres
 	}
 
 	ingressClass := "kubernetes.io/ingress.class"
-	var ig []*v1beta1.Ingress
+	var ing []*v1beta1.Ingress
 	for _, ingress := range ingresses {
 		if ingress.ObjectMeta.Annotations[ingressClass] == lb.Status.ProxyStatus.IngressClass {
-			ig = append(ig, ingress)
+			ing = append(ing, ingress)
 		}
 	}
 
-	return ig, nil
+	return ing, nil
 }
 
-// filter finalizer ingress
+// filterFinalizerIngress filter finalizer ingress
 func (l *AzureProvider) filterFinalizerIngress(ingresses []*v1beta1.Ingress) *v1beta1.Ingress {
-	for _, ig := range ingresses {
-		if ig.ObjectMeta.Finalizers != nil {
-			return ig
+	for _, ing := range ingresses {
+		if len(ing.Finalizers) != 0 {
+			return ing
 		}
 	}
 
 	return nil
 }
 
-// update ingress in azure app gateway
+// updateIngress update ingress in azure app gateway
 func (l *AzureProvider) updateIngress(ingress []*v1beta1.Ingress, lb *lbapi.LoadBalancer, deleteIngress *v1beta1.Ingress) error {
 	log.Info("updating ingress")
 	c, err := client.NewClient(&l.storeLister)
@@ -361,9 +358,15 @@ func (l *AzureProvider) updateIngress(ingress []*v1beta1.Ingress, lb *lbapi.Load
 	}
 
 	rStatus := make(map[string]string)
-	json.Unmarshal([]byte(strings.Replace(string(lb.Annotations[RULE_STATUS]), "'", "\"", -1)), &rStatus)
+	if err := json.Unmarshal([]byte(strings.Replace(string(lb.Annotations[RULE_STATUS]), "'", "\"", -1)), &rStatus); err != nil {
+		log.Errorf("annotation rule status unmarshal failed %v", err)
+		return err
+	}
 	rMsg := make(map[string]string)
-	json.Unmarshal([]byte(strings.Replace(string(lb.Annotations[RULE_MSG]), "'", "\"", -1)), &rMsg)
+	if err := json.Unmarshal([]byte(strings.Replace(string(lb.Annotations[RULE_MSG]), "'", "\"", -1)), &rMsg); err != nil {
+		log.Errorf("annotation rule msg unmarshal failed %v", err)
+		return err
+	}
 
 	// delete ingress
 	if deleteIngress != nil {
@@ -372,7 +375,9 @@ func (l *AzureProvider) updateIngress(ingress []*v1beta1.Ingress, lb *lbapi.Load
 		mjson, _ := json.Marshal(rStatus)
 		lb.Annotations[RULE_STATUS] = string(mjson)
 		patch := getAnnotationPatch(lb)
-		l.clientset.LoadbalanceV1alpha2().LoadBalancers(lb.Namespace).Patch(lb.Name, types.MergePatchType, []byte(patch))
+		if _, err := l.clientset.LoadbalanceV1alpha2().LoadBalancers(lb.Namespace).Patch(lb.Name, types.MergePatchType, []byte(patch)); err != nil {
+			return err
+		}
 
 		err = deleteAzureRule(c, ag, lb.ObjectMeta.Annotations[RESOURCE_GROUP], deleteIngress.Name)
 		if err != nil {
@@ -384,12 +389,16 @@ func (l *AzureProvider) updateIngress(ingress []*v1beta1.Ingress, lb *lbapi.Load
 			lb.Annotations[RULE_MSG] = string(emjson)
 
 			patch := getAnnotationPatch(lb)
-			l.clientset.LoadbalanceV1alpha2().LoadBalancers(lb.Namespace).Patch(lb.Name, types.MergePatchType, []byte(patch))
+			if _, err := l.clientset.LoadbalanceV1alpha2().LoadBalancers(lb.Namespace).Patch(lb.Name, types.MergePatchType, []byte(patch)); err != nil {
+				return err
+			}
 			return err
 		}
 		// update ingress finalizer
 		deletePatch := l.getIngressFinalizerPatch(deleteIngress)
-		l.clientset.ExtensionsV1beta1().Ingresses(deleteIngress.Namespace).Patch(deleteIngress.Name, types.MergePatchType, []byte(deletePatch))
+		if _, err := l.clientset.ExtensionsV1beta1().Ingresses(deleteIngress.Namespace).Patch(deleteIngress.Name, types.MergePatchType, []byte(deletePatch)); err != nil {
+			return err
+		}
 
 		delete(rStatus, deleteIngress.Name)
 		mjson, _ = json.Marshal(rStatus)
@@ -399,9 +408,11 @@ func (l *AzureProvider) updateIngress(ingress []*v1beta1.Ingress, lb *lbapi.Load
 		lb.Annotations[RULE_MSG] = string(emjson)
 
 		patch = getAnnotationPatch(lb)
-		l.clientset.LoadbalanceV1alpha2().LoadBalancers(lb.Namespace).Patch(lb.Name, types.MergePatchType, []byte(patch))
+		if _, err := l.clientset.LoadbalanceV1alpha2().LoadBalancers(lb.Namespace).Patch(lb.Name, types.MergePatchType, []byte(patch)); err != nil {
+			return err
+		}
 
-		l.setCacheAzureIngressesLen(l.ingressesLen - 1)
+		l.setCacheAzureingressesNum(l.ingressesNum - 1)
 
 		return nil
 	}
@@ -411,46 +422,52 @@ func (l *AzureProvider) updateIngress(ingress []*v1beta1.Ingress, lb *lbapi.Load
 	for _, listener := range *ag.ApplicationGatewayPropertiesFormat.HTTPListeners {
 		corres[*listener.Name] = -1
 	}
-	for _, ig := range ingress {
-		if corres[ig.Name+"-cps-listener"] != -1 {
-			log.Infof("adding ingress %s in azure", ig.Name)
-			rStatus[ig.Name] = "Adding"
+	for _, ing := range ingress {
+		if corres[ing.Name+"-cps-listener"] != -1 {
+			log.Infof("adding ingress %s in azure", ing.Name)
+			rStatus[ing.Name] = "Adding"
 			mjson, _ := json.Marshal(rStatus)
 			lb.Annotations[RULE_STATUS] = string(mjson)
 			patch := getAnnotationPatch(lb)
-			l.clientset.LoadbalanceV1alpha2().LoadBalancers(lb.Namespace).Patch(lb.Name, types.MergePatchType, []byte(patch))
+			if _, err := l.clientset.LoadbalanceV1alpha2().LoadBalancers(lb.Namespace).Patch(lb.Name, types.MergePatchType, []byte(patch)); err != nil {
+				return err
+			}
 
-			err = addAzureRule(c, ag, lb.ObjectMeta.Annotations[RESOURCE_GROUP], lb.Name, ig.Name, ig.Spec.Rules[0].Host)
+			err = addAzureRule(c, ag, lb.ObjectMeta.Annotations[RESOURCE_GROUP], lb.Name, ing.Name, ing.Spec.Rules[0].Host)
 			if err != nil {
-				rStatus[ig.Name] = "Error"
+				rStatus[ing.Name] = "Error"
 				mjson, _ := json.Marshal(rStatus)
 				lb.Annotations[RULE_STATUS] = string(mjson)
 
-				rMsg[ig.Name] = err.Error()
+				rMsg[ing.Name] = err.Error()
 				emjson, _ := json.Marshal(rStatus)
 				lb.Annotations[RULE_MSG] = string(emjson)
 
 				patch := getAnnotationPatch(lb)
-				l.clientset.LoadbalanceV1alpha2().LoadBalancers(lb.Namespace).Patch(lb.Name, types.MergePatchType, []byte(patch))
+				if _, err := l.clientset.LoadbalanceV1alpha2().LoadBalancers(lb.Namespace).Patch(lb.Name, types.MergePatchType, []byte(patch)); err != nil {
+					return err
+				}
 
 				return err
 			}
 
-			rStatus[ig.Name] = "Success"
-			rMsg[ig.Name] = ""
+			rStatus[ing.Name] = "Success"
+			rMsg[ing.Name] = ""
 			mjson, _ = json.Marshal(rStatus)
 			emjson, _ := json.Marshal(rMsg)
 			lb.Annotations[RULE_STATUS] = string(mjson)
 			lb.Annotations[RULE_MSG] = string(emjson)
 			patch = getAnnotationPatch(lb)
-			_, err = l.clientset.LoadbalanceV1alpha2().LoadBalancers(lb.Namespace).Patch(lb.Name, types.MergePatchType, []byte(patch))
+			if _, err := l.clientset.LoadbalanceV1alpha2().LoadBalancers(lb.Namespace).Patch(lb.Name, types.MergePatchType, []byte(patch)); err != nil {
+				return err
+			}
 
-			l.setCacheAzureIngressesLen(len(ingress))
+			l.setCacheAzureingressesNum(len(ingress))
 
 			return nil
 		}
 
-		log.Infof("ingress %s already exists in azure rule", ig.Name)
+		log.Infof("ingress %s already exists in azure rule", ing.Name)
 	}
 
 	return nil
@@ -676,7 +693,7 @@ func (l *AzureProvider) cleanupAzureLB(lb *lbapi.LoadBalancer, deleteLB bool) er
 	return err
 }
 
-// update azure application gateway
+// updateAzureAppGateway update the azure app gateway
 func (l *AzureProvider) updateAzureAppGateway(lb *lbapi.LoadBalancer) error {
 	c, err := client.NewClient(&l.storeLister)
 	if err != nil {
@@ -716,7 +733,9 @@ func (l *AzureProvider) updateAzureAppGateway(lb *lbapi.LoadBalancer) error {
 			lb.Annotations[BACKENDPOOL_STATUS] = "Error"
 			lb.Annotations[ERROR_MSG] = err.Error()
 			patch := getAnnotationPatch(lb)
-			l.clientset.LoadbalanceV1alpha2().LoadBalancers(lb.Namespace).Patch(lb.Name, types.MergePatchType, []byte(patch))
+			if _, err := l.clientset.LoadbalanceV1alpha2().LoadBalancers(lb.Namespace).Patch(lb.Name, types.MergePatchType, []byte(patch)); err != nil {
+				return err
+			}
 
 			return err
 		}
@@ -724,7 +743,9 @@ func (l *AzureProvider) updateAzureAppGateway(lb *lbapi.LoadBalancer) error {
 		lb.Annotations[BACKENDPOOL_STATUS] = "Success"
 		lb.Annotations[ERROR_MSG] = ""
 		patch := getAnnotationPatch(lb)
-		l.clientset.LoadbalanceV1alpha2().LoadBalancers(lb.Namespace).Patch(lb.Name, types.MergePatchType, []byte(patch))
+		if _, err := l.clientset.LoadbalanceV1alpha2().LoadBalancers(lb.Namespace).Patch(lb.Name, types.MergePatchType, []byte(patch)); err != nil {
+			return err
+		}
 
 		l.setCacheNodes(lb.Spec.Nodes.Names)
 		return nil
@@ -734,6 +755,7 @@ func (l *AzureProvider) updateAzureAppGateway(lb *lbapi.LoadBalancer) error {
 	return err
 }
 
+// deleteAzureAppGateway delete the azure app gateway
 func (l *AzureProvider) deleteAzureAppGateway(lb *lbapi.LoadBalancer) error {
 	c, err := client.NewClient(&l.storeLister)
 	if err != nil {
@@ -742,9 +764,15 @@ func (l *AzureProvider) deleteAzureAppGateway(lb *lbapi.LoadBalancer) error {
 	}
 
 	rStatus := make(map[string]string)
-	json.Unmarshal([]byte(strings.Replace(string(lb.Annotations[RULE_STATUS]), "'", "\"", -1)), &rStatus)
+	if err := json.Unmarshal([]byte(strings.Replace(string(lb.Annotations[RULE_STATUS]), "'", "\"", -1)), &rStatus); err != nil {
+		log.Errorf("annotation rule status unmarshal failed %v", err)
+		return err
+	}
 	rMsg := make(map[string]string)
-	json.Unmarshal([]byte(strings.Replace(string(lb.Annotations[RULE_MSG]), "'", "\"", -1)), &rMsg)
+	if err := json.Unmarshal([]byte(strings.Replace(string(lb.Annotations[RULE_MSG]), "'", "\"", -1)), &rMsg); err != nil {
+		log.Errorf("annotation rule msg unmarshal failed %v", err)
+		return err
+	}
 
 	err = deleteAppGatewayBackendPool(c, l.oldResourceGroup, l.oldAppGateway, lb.Name, lb.Annotations[RULE_STATUS])
 	if err != nil {
@@ -767,7 +795,9 @@ func (l *AzureProvider) deleteAzureAppGateway(lb *lbapi.LoadBalancer) error {
 		lb.Annotations[RULE_MSG] = string(emjson)
 
 		patch := getAnnotationPatch(lb)
-		l.clientset.LoadbalanceV1alpha2().LoadBalancers(lb.Namespace).Patch(lb.Name, types.MergePatchType, []byte(patch))
+		if _, err := l.clientset.LoadbalanceV1alpha2().LoadBalancers(lb.Namespace).Patch(lb.Name, types.MergePatchType, []byte(patch)); err != nil {
+			return err
+		}
 		return err
 	}
 
@@ -785,16 +815,19 @@ func (l *AzureProvider) deleteAzureAppGateway(lb *lbapi.LoadBalancer) error {
 	emjson, _ := json.Marshal(rMsg)
 	lb.Annotations[RULE_MSG] = string(emjson)
 	patch := getAnnotationPatch(lb)
-	l.clientset.LoadbalanceV1alpha2().LoadBalancers(lb.Namespace).Patch(lb.Name, types.MergePatchType, []byte(patch))
+	if _, err := l.clientset.LoadbalanceV1alpha2().LoadBalancers(lb.Namespace).Patch(lb.Name, types.MergePatchType, []byte(patch)); err != nil {
+		return err
+	}
 
 	l.setCacheAzureAppGateway(lb.Annotations[APPGATEWAY_NAME])
 	l.setCacheAzureResourceGroup(lb.Annotations[RESOURCE_GROUP])
 	l.setCacheNodes(lb.Spec.Nodes.Names)
-	l.setCacheAzureIngressesLen(len(rStatus))
+	l.setCacheAzureingressesNum(len(rStatus))
 
 	return nil
 }
 
+// addAzureAppGateway add the azure app gateway
 func (l *AzureProvider) addAzureAppGateway(lb *lbapi.LoadBalancer, nodeip []network.ApplicationGatewayBackendAddress, update bool) error {
 	c, err := client.NewClient(&l.storeLister)
 	if err != nil {
@@ -808,41 +841,53 @@ func (l *AzureProvider) addAzureAppGateway(lb *lbapi.LoadBalancer, nodeip []netw
 		lb.Annotations[APPGATEWAY_NAME] = lb.Annotations[APPGATEWAY_NAME]
 		lb.Annotations[RESOURCE_GROUP] = lb.Annotations[RESOURCE_GROUP]
 		patch := getAnnotationPatch(lb)
-		l.clientset.LoadbalanceV1alpha2().LoadBalancers(lb.Namespace).Patch(lb.Name, types.MergePatchType, []byte(patch))
+		if _, err := l.clientset.LoadbalanceV1alpha2().LoadBalancers(lb.Namespace).Patch(lb.Name, types.MergePatchType, []byte(patch)); err != nil {
+			return err
+		}
 	}
 
-	ig, _ := l.filterIngress(lb)
-	err = addAppGatewayBackendPool(c, nodeip, lb.ObjectMeta.Annotations[RESOURCE_GROUP], lb.ObjectMeta.Annotations[APPGATEWAY_NAME], lb.Name, ig)
+	ing, _ := l.filterIngress(lb)
+	err = addAppGatewayBackendPool(c, nodeip, lb.ObjectMeta.Annotations[RESOURCE_GROUP], lb.ObjectMeta.Annotations[APPGATEWAY_NAME], lb.Name, ing)
 	rStatus := make(map[string]string)
-	json.Unmarshal([]byte(strings.Replace(string(lb.Annotations[RULE_STATUS]), "'", "\"", -1)), &rStatus)
+	if err := json.Unmarshal([]byte(strings.Replace(string(lb.Annotations[RULE_STATUS]), "'", "\"", -1)), &rStatus); err != nil {
+		log.Errorf("annotation rule status unmarshal failed %v", err)
+		return err
+	}
 	rMsg := make(map[string]string)
-	json.Unmarshal([]byte(strings.Replace(string(lb.Annotations[RULE_MSG]), "'", "\"", -1)), &rMsg)
+	if err := json.Unmarshal([]byte(strings.Replace(string(lb.Annotations[RULE_MSG]), "'", "\"", -1)), &rMsg); err != nil {
+		log.Errorf("annotation rule msg unmarshal failed %v", err)
+		return err
+	}
 	if err != nil {
 		lb.Annotations[BACKENDPOOL_STATUS] = "Error"
 		lb.Annotations[ERROR_MSG] = err.Error()
-		for _, ingress := range ig {
+		for _, ingress := range ing {
 			rStatus[ingress.Name] = "Error"
 			rMsg[ingress.Name] = err.Error()
 		}
 		patch := getAnnotationPatch(lb)
-		l.clientset.LoadbalanceV1alpha2().LoadBalancers(lb.Namespace).Patch(lb.Name, types.MergePatchType, []byte(patch))
+		if _, err := l.clientset.LoadbalanceV1alpha2().LoadBalancers(lb.Namespace).Patch(lb.Name, types.MergePatchType, []byte(patch)); err != nil {
+			return err
+		}
 
 		return err
 	}
 
 	lb.Annotations[BACKENDPOOL_STATUS] = "Success"
 	lb.Annotations[ERROR_MSG] = ""
-	for _, ingress := range ig {
+	for _, ingress := range ing {
 		rStatus[ingress.Name] = "Success"
 		rMsg[ingress.Name] = ""
 	}
 	patch := getAnnotationPatch(lb)
-	l.clientset.LoadbalanceV1alpha2().LoadBalancers(lb.Namespace).Patch(lb.Name, types.MergePatchType, []byte(patch))
+	if _, err := l.clientset.LoadbalanceV1alpha2().LoadBalancers(lb.Namespace).Patch(lb.Name, types.MergePatchType, []byte(patch)); err != nil {
+		return err
+	}
 
 	l.setCacheAzureAppGateway(lb.Annotations[APPGATEWAY_NAME])
 	l.setCacheAzureResourceGroup(lb.Annotations[RESOURCE_GROUP])
 	l.setCacheNodes(lb.Spec.Nodes.Names)
-	l.setCacheAzureIngressesLen(len(rStatus))
+	l.setCacheAzureingressesNum(len(rStatus))
 
 	return nil
 }

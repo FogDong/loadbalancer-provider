@@ -3,6 +3,7 @@ package azure
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 
 	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2018-01-01/network"
@@ -23,7 +24,7 @@ const (
 
 func getAzureAppGateway(c *client.Client, groupName, appGatewayName string) (*network.ApplicationGateway, error) {
 	if len(appGatewayName) == 0 {
-		return nil, nil
+		return nil, errors.New("application gateway name can not be empty")
 	}
 	ag, err := c.AppGateway.Get(context.TODO(), groupName, appGatewayName)
 	if err != nil {
@@ -40,8 +41,8 @@ func addAppGatewayBackendPool(c *client.Client, nodeip []network.ApplicationGate
 		return err
 	}
 
-	poolName := lb + "-backendpool"
-	*ag.ApplicationGatewayPropertiesFormat.BackendAddressPools = append((*ag.ApplicationGatewayPropertiesFormat.BackendAddressPools)[:], network.ApplicationGatewayBackendAddressPool{
+	poolName := getAGPoolName(lb)
+	*ag.ApplicationGatewayPropertiesFormat.BackendAddressPools = append(*ag.ApplicationGatewayPropertiesFormat.BackendAddressPools, network.ApplicationGatewayBackendAddressPool{
 		Name: &poolName,
 		ApplicationGatewayBackendAddressPoolPropertiesFormat: &network.ApplicationGatewayBackendAddressPoolPropertiesFormat{
 			BackendAddresses: &nodeip,
@@ -49,17 +50,17 @@ func addAppGatewayBackendPool(c *client.Client, nodeip []network.ApplicationGate
 	})
 
 	if ingresses != nil {
-		corres := make(map[string]int)
+		listenerSet := make(map[string]struct{})
 		for _, listener := range *ag.ApplicationGatewayPropertiesFormat.HTTPListeners {
-			corres[*listener.Name] = -1
+			listenerSet[*listener.Name] = struct{}{}
 		}
-		igInfo := make(map[string]string)
-		for _, ig := range ingresses {
-			if corres[ig.Name+"-cps-listener"] != -1 {
-				igInfo[ig.Name] = ig.Spec.Rules[0].Host
+		ingInfo := make(map[string]string)
+		for _, ing := range ingresses {
+			if _, ok := listenerSet[getAGListenerName(ing.Name)]; ok {
+				ingInfo[ing.Name] = ing.Spec.Rules[0].Host
 			}
 		}
-		ag = addAllAzureRule(ag, lb, igInfo)
+		ag = addAllAzureRule(ag, lb, ingInfo)
 	}
 
 	_, err = c.AppGateway.CreateOrUpdate(context.TODO(), groupName, agName, *ag)
@@ -78,7 +79,7 @@ func deleteAppGatewayBackendPool(c *client.Client, groupName, agName, lb, rule s
 		return err
 	}
 
-	poolName := lb + "-backendpool"
+	poolName := getAGPoolName(lb)
 	var bp []network.ApplicationGatewayBackendAddressPool
 	for _, pool := range *ag.ApplicationGatewayPropertiesFormat.BackendAddressPools {
 		if *pool.Name != poolName {
@@ -115,15 +116,10 @@ func updateAppGatewayBackendPoolIP(c *client.Client, nodeip []network.Applicatio
 		return err
 	}
 
-	poolName := lb + "-backendpool"
+	poolName := getAGPoolName(lb)
 	for index, pool := range *ag.ApplicationGatewayPropertiesFormat.BackendAddressPools {
 		if *pool.Name == poolName {
-			(*ag.ApplicationGatewayPropertiesFormat.BackendAddressPools)[index] = network.ApplicationGatewayBackendAddressPool{
-				Name: &poolName,
-				ApplicationGatewayBackendAddressPoolPropertiesFormat: &network.ApplicationGatewayBackendAddressPoolPropertiesFormat{
-					BackendAddresses: &nodeip,
-				},
-			}
+			*(*ag.ApplicationGatewayPropertiesFormat.BackendAddressPools)[index].ApplicationGatewayBackendAddressPoolPropertiesFormat.BackendAddresses = nodeip
 		}
 	}
 
@@ -139,16 +135,16 @@ func updateAppGatewayBackendPoolIP(c *client.Client, nodeip []network.Applicatio
 
 func addAzureRule(c *client.Client, ag *network.ApplicationGateway, groupName, lbName, rule, hostname string) error {
 	// add application gateway http listener
-	listenerName := rule + "-cps-listener"
+	listenerName := getAGListenerName(rule)
 	portID := getFrontendPortID(ag)
 	result := addAppGatewayHttpListener(ag, listenerName, hostname, portID)
 
 	// add application gatway request routing rule
-	ruleName := rule + "-cps-rule"
-	poolName := lbName + "-backendpool"
+	ruleName := getAGRuleName(rule)
+	poolName := getAGPoolName(lbName)
 	IDPrefix := strings.SplitAfter(portID, *ag.Name)[0]
-	backendID := IDPrefix + "/backendAddressPools/" + poolName
-	listenerID := IDPrefix + "/httpListeners/" + listenerName
+	backendID := getAGBackendID(IDPrefix, poolName)
+	listenerID := getAGListenerID(IDPrefix, listenerName)
 	updated := addAppGatewayRequestRoutingRule(result, ruleName, backendID, listenerID)
 
 	_, err := c.AppGateway.CreateOrUpdate(context.TODO(), groupName, *ag.Name, *updated)
@@ -170,7 +166,7 @@ func getFrontendPortID(ag *network.ApplicationGateway) string {
 }
 
 func addAppGatewayHttpListener(ag *network.ApplicationGateway, listenerName, hostname, portID string) *network.ApplicationGateway {
-	*ag.ApplicationGatewayPropertiesFormat.HTTPListeners = append((*ag.ApplicationGatewayPropertiesFormat.HTTPListeners)[:], network.ApplicationGatewayHTTPListener{
+	*ag.ApplicationGatewayPropertiesFormat.HTTPListeners = append(*ag.ApplicationGatewayPropertiesFormat.HTTPListeners, network.ApplicationGatewayHTTPListener{
 		Name: &listenerName,
 		ApplicationGatewayHTTPListenerPropertiesFormat: &network.ApplicationGatewayHTTPListenerPropertiesFormat{
 			Protocol: "Http",
@@ -188,7 +184,7 @@ func addAppGatewayHttpListener(ag *network.ApplicationGateway, listenerName, hos
 }
 
 func addAppGatewayRequestRoutingRule(ag *network.ApplicationGateway, ruleName, backendID, listenerID string) *network.ApplicationGateway {
-	*ag.ApplicationGatewayPropertiesFormat.RequestRoutingRules = append((*ag.ApplicationGatewayPropertiesFormat.RequestRoutingRules)[:], network.ApplicationGatewayRequestRoutingRule{
+	*ag.ApplicationGatewayPropertiesFormat.RequestRoutingRules = append(*ag.ApplicationGatewayPropertiesFormat.RequestRoutingRules, network.ApplicationGatewayRequestRoutingRule{
 		Name: &ruleName,
 		ApplicationGatewayRequestRoutingRulePropertiesFormat: &network.ApplicationGatewayRequestRoutingRulePropertiesFormat{
 			RuleType: "Basic",
@@ -210,8 +206,8 @@ func addAppGatewayRequestRoutingRule(ag *network.ApplicationGateway, ruleName, b
 func deleteAllAzureRule(ag *network.ApplicationGateway, groupName string, rule map[string]string) *network.ApplicationGateway {
 	for k, v := range rule {
 		if v == "Success" {
-			ruleName := k + "-cps-rule"
-			listenerName := k + "-cps-listener"
+			ruleName := getAGRuleName(k)
+			listenerName := getAGListenerName(k)
 			result := deleteAppGatewayRequestRoutingRule(ag, ruleName)
 
 			// delete application gateway http listener
@@ -223,15 +219,15 @@ func deleteAllAzureRule(ag *network.ApplicationGateway, groupName string, rule m
 
 func addAllAzureRule(ag *network.ApplicationGateway, poolName string, rule map[string]string) *network.ApplicationGateway {
 	for k, v := range rule {
-		listenerName := k + "-cps-listener"
+		listenerName := getAGListenerName(k)
 		portID := getFrontendPortID(ag)
 		result := addAppGatewayHttpListener(ag, listenerName, v, portID)
 
 		// add application gatway request routing rule
-		ruleName := k + "-cps-rule"
+		ruleName := getAGRuleName(k)
 		IDPrefix := strings.SplitAfter(portID, *ag.Name)[0]
-		backendID := IDPrefix + "/backendAddressPools/" + poolName
-		listenerID := IDPrefix + "/httpListeners/" + listenerName
+		backendID := getAGBackendID(IDPrefix, poolName)
+		listenerID := getAGListenerID(IDPrefix, listenerName)
 		ag = addAppGatewayRequestRoutingRule(result, ruleName, backendID, listenerID)
 	}
 	return ag
@@ -239,8 +235,8 @@ func addAllAzureRule(ag *network.ApplicationGateway, poolName string, rule map[s
 
 func deleteAzureRule(c *client.Client, ag *network.ApplicationGateway, groupName, rule string) error {
 	// delete application gatway request routing rule
-	ruleName := rule + "-cps-rule"
-	listenerName := rule + "-cps-listener"
+	ruleName := getAGRuleName(rule)
+	listenerName := getAGListenerName(rule)
 	result := deleteAppGatewayRequestRoutingRule(ag, ruleName)
 
 	// delete application gateway http listener
@@ -277,4 +273,24 @@ func deleteAppGatewayRequestRoutingRule(ag *network.ApplicationGateway, ruleName
 	*ag.ApplicationGatewayPropertiesFormat.RequestRoutingRules = rr
 
 	return ag
+}
+
+func getAGPoolName(lb string) string {
+	return lb + "-backendpool"
+}
+
+func getAGRuleName(ing string) string {
+	return ing + "-cps-rule"
+}
+
+func getAGListenerName(ing string) string {
+	return ing + "-cps-listener"
+}
+
+func getAGBackendID(prefix, poolName string) string {
+	return prefix + "/backendAddressPools/" + poolName
+}
+
+func getAGListenerID(prefix, listenerName string) string {
+	return prefix + "/httpListeners/" + listenerName
 }
