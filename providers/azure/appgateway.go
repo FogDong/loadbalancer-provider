@@ -47,21 +47,23 @@ func addAppGatewayBackendPool(c *client.Client, nodeip []network.ApplicationGate
 	}
 
 	poolName := getAGPoolName(lb)
-	if ag.BackendAddressPools != nil {
-		*ag.BackendAddressPools = append(*ag.BackendAddressPools, network.ApplicationGatewayBackendAddressPool{
-			Name: &poolName,
-			ApplicationGatewayBackendAddressPoolPropertiesFormat: &network.ApplicationGatewayBackendAddressPoolPropertiesFormat{
-				BackendAddresses: &nodeip,
-			},
-		})
+	if ag.BackendAddressPools == nil {
+		ag.BackendAddressPools = &[]network.ApplicationGatewayBackendAddressPool{}
 	}
+	*ag.BackendAddressPools = append(*ag.BackendAddressPools, network.ApplicationGatewayBackendAddressPool{
+		Name: &poolName,
+		ApplicationGatewayBackendAddressPoolPropertiesFormat: &network.ApplicationGatewayBackendAddressPoolPropertiesFormat{
+			BackendAddresses: &nodeip,
+		},
+	})
 
 	if ingresses != nil {
 		listenerSet := make(map[string]struct{})
-		if ag.HTTPListeners != nil {
-			for _, listener := range *ag.HTTPListeners {
-				listenerSet[to.String(listener.Name)] = struct{}{}
-			}
+		if ag.HTTPListeners == nil {
+			ag.HTTPListeners = &[]network.ApplicationGatewayHTTPListener{}
+		}
+		for _, listener := range *ag.HTTPListeners {
+			listenerSet[to.String(listener.Name)] = struct{}{}
 		}
 		ingInfo := make(map[string]string)
 		for _, ing := range ingresses {
@@ -90,11 +92,12 @@ func deleteAppGatewayBackendPool(c *client.Client, groupName, agName, lb, rule s
 
 	poolName := getAGPoolName(lb)
 	var bp []network.ApplicationGatewayBackendAddressPool
-	if ag.BackendAddressPools != nil {
-		for _, pool := range *ag.BackendAddressPools {
-			if to.String(pool.Name) != poolName {
-				bp = append(bp, pool)
-			}
+	if ag.BackendAddressPools == nil {
+		ag.BackendAddressPools = &[]network.ApplicationGatewayBackendAddressPool{}
+	}
+	for _, pool := range *ag.BackendAddressPools {
+		if to.String(pool.Name) != poolName {
+			bp = append(bp, pool)
 		}
 	}
 	ag.BackendAddressPools = &bp
@@ -128,11 +131,12 @@ func updateAppGatewayBackendPoolIP(c *client.Client, nodeip []network.Applicatio
 	}
 
 	poolName := getAGPoolName(lb)
-	if ag.BackendAddressPools != nil {
-		for index, pool := range *ag.BackendAddressPools {
-			if to.String(pool.Name) == poolName {
-				(*ag.BackendAddressPools)[index].BackendAddresses = &nodeip
-			}
+	if ag.BackendAddressPools == nil {
+		ag.BackendAddressPools = &[]network.ApplicationGatewayBackendAddressPool{}
+	}
+	for index, pool := range *ag.BackendAddressPools {
+		if to.String(pool.Name) == poolName {
+			(*ag.BackendAddressPools)[index].BackendAddresses = &nodeip
 		}
 	}
 
@@ -169,11 +173,12 @@ func addAzureRule(c *client.Client, ag *network.ApplicationGateway, groupName, l
 }
 
 func getFrontendPortID(ag *network.ApplicationGateway) string {
-	if ag.FrontendPorts != nil {
-		for _, port := range *ag.FrontendPorts {
-			if to.Int32(port.Port) == 80 {
-				return to.String(port.ID)
-			}
+	if ag.FrontendPorts == nil {
+		ag.FrontendPorts = &[]network.ApplicationGatewayFrontendPort{}
+	}
+	for _, port := range *ag.FrontendPorts {
+		if to.Int32(port.Port) == 80 {
+			return to.String(port.ID)
 		}
 	}
 
@@ -181,43 +186,45 @@ func getFrontendPortID(ag *network.ApplicationGateway) string {
 }
 
 func addAppGatewayHttpListener(ag *network.ApplicationGateway, listenerName, hostname, portID string) *network.ApplicationGateway {
-	if ag.HTTPListeners != nil {
-		*ag.HTTPListeners = append(*ag.HTTPListeners, network.ApplicationGatewayHTTPListener{
-			Name: &listenerName,
-			ApplicationGatewayHTTPListenerPropertiesFormat: &network.ApplicationGatewayHTTPListenerPropertiesFormat{
-				Protocol: "Http",
-				HostName: &hostname,
-				FrontendIPConfiguration: &network.SubResource{
-					ID: (*ag.ApplicationGatewayPropertiesFormat.FrontendIPConfigurations)[0].ID,
-				},
-				FrontendPort: &network.SubResource{
-					ID: &portID,
-				},
-			},
-		})
+	if ag.HTTPListeners == nil {
+		ag.HTTPListeners = &[]network.ApplicationGatewayHTTPListener{}
 	}
+	*ag.HTTPListeners = append(*ag.HTTPListeners, network.ApplicationGatewayHTTPListener{
+		Name: &listenerName,
+		ApplicationGatewayHTTPListenerPropertiesFormat: &network.ApplicationGatewayHTTPListenerPropertiesFormat{
+			Protocol: "Http",
+			HostName: &hostname,
+			FrontendIPConfiguration: &network.SubResource{
+				ID: (*ag.ApplicationGatewayPropertiesFormat.FrontendIPConfigurations)[0].ID,
+			},
+			FrontendPort: &network.SubResource{
+				ID: &portID,
+			},
+		},
+	})
 
 	return ag
 }
 
 func addAppGatewayRequestRoutingRule(ag *network.ApplicationGateway, ruleName, backendID, listenerID string) *network.ApplicationGateway {
-	if ag.RequestRoutingRules != nil {
-		*ag.RequestRoutingRules = append(*ag.RequestRoutingRules, network.ApplicationGatewayRequestRoutingRule{
-			Name: &ruleName,
-			ApplicationGatewayRequestRoutingRulePropertiesFormat: &network.ApplicationGatewayRequestRoutingRulePropertiesFormat{
-				RuleType: "Basic",
-				BackendAddressPool: &network.SubResource{
-					ID: &backendID,
-				},
-				BackendHTTPSettings: &network.SubResource{
-					ID: (*ag.ApplicationGatewayPropertiesFormat.BackendHTTPSettingsCollection)[0].ID,
-				},
-				HTTPListener: &network.SubResource{
-					ID: &listenerID,
-				},
-			},
-		})
+	if ag.RequestRoutingRules == nil {
+		ag.RequestRoutingRules = &[]network.ApplicationGatewayRequestRoutingRule{}
 	}
+	*ag.RequestRoutingRules = append(*ag.RequestRoutingRules, network.ApplicationGatewayRequestRoutingRule{
+		Name: &ruleName,
+		ApplicationGatewayRequestRoutingRulePropertiesFormat: &network.ApplicationGatewayRequestRoutingRulePropertiesFormat{
+			RuleType: "Basic",
+			BackendAddressPool: &network.SubResource{
+				ID: &backendID,
+			},
+			BackendHTTPSettings: &network.SubResource{
+				ID: (*ag.ApplicationGatewayPropertiesFormat.BackendHTTPSettingsCollection)[0].ID,
+			},
+			HTTPListener: &network.SubResource{
+				ID: &listenerID,
+			},
+		},
+	})
 
 	return ag
 }
@@ -271,29 +278,31 @@ func deleteAzureRule(c *client.Client, ag *network.ApplicationGateway, groupName
 }
 
 func deleteAppGatewayHttpListener(ag *network.ApplicationGateway, listenerName string) *network.ApplicationGateway {
-	var hl []network.ApplicationGatewayHTTPListener
-	if ag.HTTPListeners != nil {
-		for _, listener := range *ag.HTTPListeners {
-			if to.String(listener.Name) != listenerName {
-				hl = append(hl, listener)
-			}
+	var aghl []network.ApplicationGatewayHTTPListener
+	if ag.HTTPListeners == nil {
+		ag.HTTPListeners = &[]network.ApplicationGatewayHTTPListener{}
+	}
+	for _, listener := range *ag.HTTPListeners {
+		if to.String(listener.Name) != listenerName {
+			aghl = append(aghl, listener)
 		}
 	}
-	ag.HTTPListeners = &hl
+	ag.HTTPListeners = &aghl
 
 	return ag
 }
 
 func deleteAppGatewayRequestRoutingRule(ag *network.ApplicationGateway, ruleName string) *network.ApplicationGateway {
-	var rr []network.ApplicationGatewayRequestRoutingRule
-	if ag.RequestRoutingRules != nil {
-		for _, rule := range *ag.RequestRoutingRules {
-			if to.String(rule.Name) != ruleName {
-				rr = append(rr, rule)
-			}
+	var agrr []network.ApplicationGatewayRequestRoutingRule
+	if ag.RequestRoutingRules == nil {
+		ag.RequestRoutingRules = &[]network.ApplicationGatewayRequestRoutingRule{}
+	}
+	for _, rule := range *ag.RequestRoutingRules {
+		if to.String(rule.Name) != ruleName {
+			agrr = append(agrr, rule)
 		}
 	}
-	ag.RequestRoutingRules = &rr
+	ag.RequestRoutingRules = &agrr
 
 	return ag
 }

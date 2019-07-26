@@ -305,7 +305,7 @@ func (p *GenericProvider) filterConfigMap(cm *v1.ConfigMap) bool {
 }
 
 func (p *GenericProvider) filterIngress(ig *v1beta1.Ingress) bool {
-	if ig.ObjectMeta.Annotations[INGRESS_CLASS] == p.cfg.IngressClass {
+	if ig.Annotations[INGRESS_CLASS] == p.cfg.IngressClass {
 		return false
 	}
 	return true
