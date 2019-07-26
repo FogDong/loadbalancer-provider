@@ -59,12 +59,12 @@ func addAppGatewayBackendPool(c *client.Client, nodeip []network.ApplicationGate
 
 	if ingresses != nil {
 		listenerSet := make(map[string]struct{})
-		if ag.HTTPListeners == nil {
-			ag.HTTPListeners = &[]network.ApplicationGatewayHTTPListener{}
+		if ag.HTTPListeners != nil {
+			for _, listener := range *ag.HTTPListeners {
+				listenerSet[to.String(listener.Name)] = struct{}{}
+			}			
 		}
-		for _, listener := range *ag.HTTPListeners {
-			listenerSet[to.String(listener.Name)] = struct{}{}
-		}
+
 		ingInfo := make(map[string]string)
 		for _, ing := range ingresses {
 			if _, ok := listenerSet[getAGListenerName(ing.Name)]; ok {
@@ -92,14 +92,14 @@ func deleteAppGatewayBackendPool(c *client.Client, groupName, agName, lb, rule s
 
 	poolName := getAGPoolName(lb)
 	var bp []network.ApplicationGatewayBackendAddressPool
-	if ag.BackendAddressPools == nil {
-		ag.BackendAddressPools = &[]network.ApplicationGatewayBackendAddressPool{}
-	}
-	for _, pool := range *ag.BackendAddressPools {
-		if to.String(pool.Name) != poolName {
-			bp = append(bp, pool)
+	if ag.BackendAddressPools != nil {
+		for _, pool := range *ag.BackendAddressPools {
+			if to.String(pool.Name) != poolName {
+				bp = append(bp, pool)
+			}
 		}
 	}
+
 	ag.BackendAddressPools = &bp
 
 	if rule != "" {
@@ -131,13 +131,12 @@ func updateAppGatewayBackendPoolIP(c *client.Client, nodeip []network.Applicatio
 	}
 
 	poolName := getAGPoolName(lb)
-	if ag.BackendAddressPools == nil {
-		ag.BackendAddressPools = &[]network.ApplicationGatewayBackendAddressPool{}
-	}
-	for index, pool := range *ag.BackendAddressPools {
-		if to.String(pool.Name) == poolName {
-			(*ag.BackendAddressPools)[index].BackendAddresses = &nodeip
-		}
+	if ag.BackendAddressPools != nil {
+		for index, pool := range *ag.BackendAddressPools {
+			if to.String(pool.Name) == poolName {
+				(*ag.BackendAddressPools)[index].BackendAddresses = &nodeip
+			}
+		}		
 	}
 
 	_, err = c.AppGateway.CreateOrUpdate(context.TODO(), groupName, agName, *ag)
@@ -173,13 +172,12 @@ func addAzureRule(c *client.Client, ag *network.ApplicationGateway, groupName, l
 }
 
 func getFrontendPortID(ag *network.ApplicationGateway) string {
-	if ag.FrontendPorts == nil {
-		ag.FrontendPorts = &[]network.ApplicationGatewayFrontendPort{}
-	}
-	for _, port := range *ag.FrontendPorts {
-		if to.Int32(port.Port) == 80 {
-			return to.String(port.ID)
-		}
+	if ag.FrontendPorts != nil {
+		for _, port := range *ag.FrontendPorts {
+			if to.Int32(port.Port) == 80 {
+				return to.String(port.ID)
+			}
+		}		
 	}
 
 	return ""
@@ -279,13 +277,12 @@ func deleteAzureRule(c *client.Client, ag *network.ApplicationGateway, groupName
 
 func deleteAppGatewayHttpListener(ag *network.ApplicationGateway, listenerName string) *network.ApplicationGateway {
 	var aghl []network.ApplicationGatewayHTTPListener
-	if ag.HTTPListeners == nil {
-		ag.HTTPListeners = &[]network.ApplicationGatewayHTTPListener{}
-	}
-	for _, listener := range *ag.HTTPListeners {
-		if to.String(listener.Name) != listenerName {
-			aghl = append(aghl, listener)
-		}
+	if ag.HTTPListeners != nil {
+		for _, listener := range *ag.HTTPListeners {
+			if to.String(listener.Name) != listenerName {
+				aghl = append(aghl, listener)
+			}
+		}		
 	}
 	ag.HTTPListeners = &aghl
 
@@ -294,13 +291,12 @@ func deleteAppGatewayHttpListener(ag *network.ApplicationGateway, listenerName s
 
 func deleteAppGatewayRequestRoutingRule(ag *network.ApplicationGateway, ruleName string) *network.ApplicationGateway {
 	var agrr []network.ApplicationGatewayRequestRoutingRule
-	if ag.RequestRoutingRules == nil {
-		ag.RequestRoutingRules = &[]network.ApplicationGatewayRequestRoutingRule{}
-	}
-	for _, rule := range *ag.RequestRoutingRules {
-		if to.String(rule.Name) != ruleName {
-			agrr = append(agrr, rule)
-		}
+	if ag.RequestRoutingRules != nil {
+		for _, rule := range *ag.RequestRoutingRules {
+			if to.String(rule.Name) != ruleName {
+				agrr = append(agrr, rule)
+			}
+		}		
 	}
 	ag.RequestRoutingRules = &agrr
 
