@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2018-01-01/network"
+	"github.com/Azure/go-autorest/autorest/to"
 	"github.com/caicloud/loadbalancer-provider/providers/azure/client"
 	log "github.com/zoumo/logdog"
 	v1beta1 "k8s.io/api/extensions/v1beta1"
@@ -20,6 +21,7 @@ const (
 	RULE_MSG           = "loadbalance.caicloud.io/azureRuleErrorMsg"
 	ERROR_MSG          = "loadbalance.caicloud.io/azureErrorMsg"
 	RESOURCE_GROUP     = "loadbalance.caicloud.io/azureResourceGroup"
+	INGRESS_CLASS      = "kubernetes.io/ingress.class"
 )
 
 func getAzureAppGateway(c *client.Client, groupName, appGatewayName string) (*network.ApplicationGateway, error) {
@@ -30,29 +32,36 @@ func getAzureAppGateway(c *client.Client, groupName, appGatewayName string) (*ne
 	if err != nil {
 		return nil, err
 	}
+	if &ag == nil {
+		return nil, errors.New("can not find the application gateway")
+	}
 
 	return &ag, nil
 }
 
 func addAppGatewayBackendPool(c *client.Client, nodeip []network.ApplicationGatewayBackendAddress, groupName, agName, lb string, ingresses []*v1beta1.Ingress) error {
 	ag, err := getAzureAppGateway(c, groupName, agName)
-	if err != nil || ag == nil {
+	if err != nil {
 		log.Errorf("get application %s gateway error %v", agName, err)
 		return err
 	}
 
 	poolName := getAGPoolName(lb)
-	*ag.ApplicationGatewayPropertiesFormat.BackendAddressPools = append(*ag.ApplicationGatewayPropertiesFormat.BackendAddressPools, network.ApplicationGatewayBackendAddressPool{
-		Name: &poolName,
-		ApplicationGatewayBackendAddressPoolPropertiesFormat: &network.ApplicationGatewayBackendAddressPoolPropertiesFormat{
-			BackendAddresses: &nodeip,
-		},
-	})
+	if ag.BackendAddressPools != nil {
+		*ag.BackendAddressPools = append(*ag.BackendAddressPools, network.ApplicationGatewayBackendAddressPool{
+			Name: &poolName,
+			ApplicationGatewayBackendAddressPoolPropertiesFormat: &network.ApplicationGatewayBackendAddressPoolPropertiesFormat{
+				BackendAddresses: &nodeip,
+			},
+		})
+	}
 
 	if ingresses != nil {
 		listenerSet := make(map[string]struct{})
-		for _, listener := range *ag.ApplicationGatewayPropertiesFormat.HTTPListeners {
-			listenerSet[*listener.Name] = struct{}{}
+		if ag.HTTPListeners != nil {
+			for _, listener := range *ag.HTTPListeners {
+				listenerSet[to.String(listener.Name)] = struct{}{}
+			}
 		}
 		ingInfo := make(map[string]string)
 		for _, ing := range ingresses {
@@ -74,19 +83,21 @@ func addAppGatewayBackendPool(c *client.Client, nodeip []network.ApplicationGate
 
 func deleteAppGatewayBackendPool(c *client.Client, groupName, agName, lb, rule string) error {
 	ag, err := getAzureAppGateway(c, groupName, agName)
-	if err != nil || ag == nil {
+	if err != nil {
 		log.Errorf("get application gateway error %v", err)
 		return err
 	}
 
 	poolName := getAGPoolName(lb)
 	var bp []network.ApplicationGatewayBackendAddressPool
-	for _, pool := range *ag.ApplicationGatewayPropertiesFormat.BackendAddressPools {
-		if *pool.Name != poolName {
-			bp = append(bp, pool)
+	if ag.BackendAddressPools != nil {
+		for _, pool := range *ag.BackendAddressPools {
+			if to.String(pool.Name) != poolName {
+				bp = append(bp, pool)
+			}
 		}
 	}
-	*ag.ApplicationGatewayPropertiesFormat.BackendAddressPools = bp
+	ag.BackendAddressPools = &bp
 
 	if rule != "" {
 		log.Info("deleting all azure rule")
@@ -117,9 +128,11 @@ func updateAppGatewayBackendPoolIP(c *client.Client, nodeip []network.Applicatio
 	}
 
 	poolName := getAGPoolName(lb)
-	for index, pool := range *ag.ApplicationGatewayPropertiesFormat.BackendAddressPools {
-		if *pool.Name == poolName {
-			*(*ag.ApplicationGatewayPropertiesFormat.BackendAddressPools)[index].ApplicationGatewayBackendAddressPoolPropertiesFormat.BackendAddresses = nodeip
+	if ag.BackendAddressPools != nil {
+		for index, pool := range *ag.BackendAddressPools {
+			if to.String(pool.Name) == poolName {
+				(*ag.BackendAddressPools)[index].BackendAddresses = &nodeip
+			}
 		}
 	}
 
@@ -130,7 +143,6 @@ func updateAppGatewayBackendPoolIP(c *client.Client, nodeip []network.Applicatio
 	}
 
 	return nil
-
 }
 
 func addAzureRule(c *client.Client, ag *network.ApplicationGateway, groupName, lbName, rule, hostname string) error {
@@ -142,12 +154,12 @@ func addAzureRule(c *client.Client, ag *network.ApplicationGateway, groupName, l
 	// add application gatway request routing rule
 	ruleName := getAGRuleName(rule)
 	poolName := getAGPoolName(lbName)
-	IDPrefix := strings.SplitAfter(portID, *ag.Name)[0]
+	IDPrefix := strings.SplitAfter(portID, to.String(ag.Name))[0]
 	backendID := getAGBackendID(IDPrefix, poolName)
 	listenerID := getAGListenerID(IDPrefix, listenerName)
 	updated := addAppGatewayRequestRoutingRule(result, ruleName, backendID, listenerID)
 
-	_, err := c.AppGateway.CreateOrUpdate(context.TODO(), groupName, *ag.Name, *updated)
+	_, err := c.AppGateway.CreateOrUpdate(context.TODO(), groupName, to.String(ag.Name), *updated)
 	if err != nil {
 		log.Errorf("add azure rule update application gateway error %v", err)
 		return err
@@ -157,48 +169,55 @@ func addAzureRule(c *client.Client, ag *network.ApplicationGateway, groupName, l
 }
 
 func getFrontendPortID(ag *network.ApplicationGateway) string {
-	for _, port := range *ag.ApplicationGatewayPropertiesFormat.FrontendPorts {
-		if *port.ApplicationGatewayFrontendPortPropertiesFormat.Port == 80 {
-			return *port.ID
+	if ag.FrontendPorts != nil {
+		for _, port := range *ag.FrontendPorts {
+			if to.Int32(port.Port) == 80 {
+				return to.String(port.ID)
+			}
 		}
 	}
+
 	return ""
 }
 
 func addAppGatewayHttpListener(ag *network.ApplicationGateway, listenerName, hostname, portID string) *network.ApplicationGateway {
-	*ag.ApplicationGatewayPropertiesFormat.HTTPListeners = append(*ag.ApplicationGatewayPropertiesFormat.HTTPListeners, network.ApplicationGatewayHTTPListener{
-		Name: &listenerName,
-		ApplicationGatewayHTTPListenerPropertiesFormat: &network.ApplicationGatewayHTTPListenerPropertiesFormat{
-			Protocol: "Http",
-			HostName: &hostname,
-			FrontendIPConfiguration: &network.SubResource{
-				ID: (*ag.ApplicationGatewayPropertiesFormat.FrontendIPConfigurations)[0].ID,
+	if ag.HTTPListeners != nil {
+		*ag.HTTPListeners = append(*ag.HTTPListeners, network.ApplicationGatewayHTTPListener{
+			Name: &listenerName,
+			ApplicationGatewayHTTPListenerPropertiesFormat: &network.ApplicationGatewayHTTPListenerPropertiesFormat{
+				Protocol: "Http",
+				HostName: &hostname,
+				FrontendIPConfiguration: &network.SubResource{
+					ID: (*ag.ApplicationGatewayPropertiesFormat.FrontendIPConfigurations)[0].ID,
+				},
+				FrontendPort: &network.SubResource{
+					ID: &portID,
+				},
 			},
-			FrontendPort: &network.SubResource{
-				ID: &portID,
-			},
-		},
-	})
+		})
+	}
 
 	return ag
 }
 
 func addAppGatewayRequestRoutingRule(ag *network.ApplicationGateway, ruleName, backendID, listenerID string) *network.ApplicationGateway {
-	*ag.ApplicationGatewayPropertiesFormat.RequestRoutingRules = append(*ag.ApplicationGatewayPropertiesFormat.RequestRoutingRules, network.ApplicationGatewayRequestRoutingRule{
-		Name: &ruleName,
-		ApplicationGatewayRequestRoutingRulePropertiesFormat: &network.ApplicationGatewayRequestRoutingRulePropertiesFormat{
-			RuleType: "Basic",
-			BackendAddressPool: &network.SubResource{
-				ID: &backendID,
+	if ag.RequestRoutingRules != nil {
+		*ag.RequestRoutingRules = append(*ag.RequestRoutingRules, network.ApplicationGatewayRequestRoutingRule{
+			Name: &ruleName,
+			ApplicationGatewayRequestRoutingRulePropertiesFormat: &network.ApplicationGatewayRequestRoutingRulePropertiesFormat{
+				RuleType: "Basic",
+				BackendAddressPool: &network.SubResource{
+					ID: &backendID,
+				},
+				BackendHTTPSettings: &network.SubResource{
+					ID: (*ag.ApplicationGatewayPropertiesFormat.BackendHTTPSettingsCollection)[0].ID,
+				},
+				HTTPListener: &network.SubResource{
+					ID: &listenerID,
+				},
 			},
-			BackendHTTPSettings: &network.SubResource{
-				ID: (*ag.ApplicationGatewayPropertiesFormat.BackendHTTPSettingsCollection)[0].ID,
-			},
-			HTTPListener: &network.SubResource{
-				ID: &listenerID,
-			},
-		},
-	})
+		})
+	}
 
 	return ag
 }
@@ -225,7 +244,7 @@ func addAllAzureRule(ag *network.ApplicationGateway, poolName string, rule map[s
 
 		// add application gatway request routing rule
 		ruleName := getAGRuleName(k)
-		IDPrefix := strings.SplitAfter(portID, *ag.Name)[0]
+		IDPrefix := strings.SplitAfter(portID, to.String(ag.Name))[0]
 		backendID := getAGBackendID(IDPrefix, poolName)
 		listenerID := getAGListenerID(IDPrefix, listenerName)
 		ag = addAppGatewayRequestRoutingRule(result, ruleName, backendID, listenerID)
@@ -242,7 +261,7 @@ func deleteAzureRule(c *client.Client, ag *network.ApplicationGateway, groupName
 	// delete application gateway http listener
 	updated := deleteAppGatewayHttpListener(result, listenerName)
 
-	_, err := c.AppGateway.CreateOrUpdate(context.TODO(), groupName, *updated.Name, *updated)
+	_, err := c.AppGateway.CreateOrUpdate(context.TODO(), groupName, to.String(updated.Name), *updated)
 	if err != nil {
 		log.Errorf("update application gateway error %v", err)
 		return err
@@ -253,24 +272,28 @@ func deleteAzureRule(c *client.Client, ag *network.ApplicationGateway, groupName
 
 func deleteAppGatewayHttpListener(ag *network.ApplicationGateway, listenerName string) *network.ApplicationGateway {
 	var hl []network.ApplicationGatewayHTTPListener
-	for _, listener := range *ag.ApplicationGatewayPropertiesFormat.HTTPListeners {
-		if *listener.Name != listenerName {
-			hl = append(hl, listener)
+	if ag.HTTPListeners != nil {
+		for _, listener := range *ag.HTTPListeners {
+			if to.String(listener.Name) != listenerName {
+				hl = append(hl, listener)
+			}
 		}
 	}
-	*ag.ApplicationGatewayPropertiesFormat.HTTPListeners = hl
+	ag.HTTPListeners = &hl
 
 	return ag
 }
 
 func deleteAppGatewayRequestRoutingRule(ag *network.ApplicationGateway, ruleName string) *network.ApplicationGateway {
 	var rr []network.ApplicationGatewayRequestRoutingRule
-	for _, rule := range *ag.ApplicationGatewayPropertiesFormat.RequestRoutingRules {
-		if *rule.Name != ruleName {
-			rr = append(rr, rule)
+	if ag.RequestRoutingRules != nil {
+		for _, rule := range *ag.RequestRoutingRules {
+			if to.String(rule.Name) != ruleName {
+				rr = append(rr, rule)
+			}
 		}
 	}
-	*ag.ApplicationGatewayPropertiesFormat.RequestRoutingRules = rr
+	ag.RequestRoutingRules = &rr
 
 	return ag
 }

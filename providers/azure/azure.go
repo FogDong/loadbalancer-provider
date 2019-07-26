@@ -111,6 +111,9 @@ func (l *AzureProvider) OnUpdate(lb *lbapi.LoadBalancer) error {
 	log.Infof("OnUpdate......")
 
 	nlb := lb.DeepCopy()
+	if nlb.Annotations == nil {
+		nlb.Annotations = make(map[string]string)
+	}
 	agStatus := lb.Annotations[BACKENDPOOL_STATUS]
 	if agStatus != "" && agStatus != "Success" && agStatus != "Error" &&
 		(lb.Annotations[APPGATEWAY_NAME] != l.oldAppGateway || !reflect.DeepEqual(l.nodes, lb.Spec.Nodes.Names)) {
@@ -320,10 +323,9 @@ func (l *AzureProvider) filterIngress(lb *lbapi.LoadBalancer) ([]*v1beta1.Ingres
 		return nil, err
 	}
 
-	ingressClass := "kubernetes.io/ingress.class"
 	var ing []*v1beta1.Ingress
 	for _, ingress := range ingresses {
-		if ingress.ObjectMeta.Annotations[ingressClass] == lb.Status.ProxyStatus.IngressClass {
+		if ingress.ObjectMeta.Annotations[INGRESS_CLASS] == lb.Status.ProxyStatus.IngressClass {
 			ing = append(ing, ingress)
 		}
 	}
@@ -352,7 +354,7 @@ func (l *AzureProvider) updateIngress(ingress []*v1beta1.Ingress, lb *lbapi.Load
 	}
 
 	ag, err := getAzureAppGateway(c, lb.Annotations[RESOURCE_GROUP], lb.Annotations[APPGATEWAY_NAME])
-	if err != nil || ag == nil {
+	if err != nil {
 		log.Errorf("get application gateway error %v", err)
 		return err
 	}
@@ -418,12 +420,14 @@ func (l *AzureProvider) updateIngress(ingress []*v1beta1.Ingress, lb *lbapi.Load
 	}
 
 	// add ingress
-	corres := make(map[string]int)
-	for _, listener := range *ag.ApplicationGatewayPropertiesFormat.HTTPListeners {
-		corres[*listener.Name] = -1
+	listenerSet := make(map[string]struct{})
+	if ag.HTTPListeners != nil {
+		for _, listener := range *ag.HTTPListeners {
+			listenerSet[to.String(listener.Name)] = struct{}{}
+		}			
 	}
 	for _, ing := range ingress {
-		if corres[ing.Name+"-cps-listener"] != -1 {
+		if _, ok := listenerSet[getAGListenerName(ing.Name)]; ok {
 			log.Infof("adding ingress %s in azure", ing.Name)
 			rStatus[ing.Name] = "Adding"
 			mjson, _ := json.Marshal(rStatus)
