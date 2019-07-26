@@ -32,9 +32,6 @@ func getAzureAppGateway(c *client.Client, groupName, appGatewayName string) (*ne
 	if err != nil {
 		return nil, err
 	}
-	if &ag == nil {
-		return nil, errors.New("can not find the application gateway")
-	}
 
 	return &ag, nil
 }
