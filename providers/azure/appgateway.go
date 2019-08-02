@@ -14,14 +14,14 @@ import (
 )
 
 const (
-	APPGATEWAY         = "loadbalance.caicloud.io/azureAppGateway"
-	APPGATEWAY_NAME    = "loadbalance.caicloud.io/azureAppGatewayName"
-	BACKENDPOOL_STATUS = "loadbalance.caicloud.io/azureBackendPoolStatus"
-	RULE_STATUS        = "loadbalance.caicloud.io/azureRuleStatus"
-	RULE_MSG           = "loadbalance.caicloud.io/azureRuleErrorMsg"
-	ERROR_MSG          = "loadbalance.caicloud.io/azureErrorMsg"
-	RESOURCE_GROUP     = "loadbalance.caicloud.io/azureResourceGroup"
-	INGRESS_CLASS      = "kubernetes.io/ingress.class"
+	AppGateway         = "loadbalance.caicloud.io/azureAppGateway"
+	AppGatewayName    = "loadbalance.caicloud.io/azureAppGatewayName"
+	BackendpoolStatus = "loadbalance.caicloud.io/azureBackendPoolStatus"
+	RuleStatus        = "loadbalance.caicloud.io/azureRuleStatus"
+	RuleMsg           = "loadbalance.caicloud.io/azureRuleErrorMsg"
+	ErrorMsg          = "loadbalance.caicloud.io/azureErrorMsg"
+	ResourceGroup     = "loadbalance.caicloud.io/azureResourceGroup"
+	IngressClass      = "kubernetes.io/ingress.class"
 )
 
 func getAzureAppGateway(c *client.Client, groupName, appGatewayName string) (*network.ApplicationGateway, error) {

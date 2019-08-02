@@ -26,8 +26,8 @@ import (
 )
 
 const (
-	APPGATEWAY_NAME = "loadbalance.caicloud.io/azureAppGatewayName"
-	INGRESS_CLASS = "kubernetes.io/ingress.class"
+	AppGatewayName = "loadbalance.caicloud.io/azureAppGatewayName"
+	IngressClass = "kubernetes.io/ingress.class"
 )
 
 // Provider holds the methods to handle an Provider backend

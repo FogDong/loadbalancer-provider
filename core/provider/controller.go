@@ -182,7 +182,7 @@ func (p *GenericProvider) updateLoadBalancer(oldObj, curObj interface{}) {
 		reflect.DeepEqual(old.Status.ProxyStatus.TCPConfigMap, cur.Status.ProxyStatus.TCPConfigMap) &&
 		reflect.DeepEqual(old.Status.ProxyStatus.UDPConfigMap, cur.Status.ProxyStatus.UDPConfigMap) &&
 		old.Annotations != nil && cur.Annotations != nil &&
-		reflect.DeepEqual(old.Annotations[APPGATEWAY_NAME], cur.Annotations[APPGATEWAY_NAME]) {
+		old.Annotations[AppGatewayName] == cur.Annotations[AppGatewayName] {
 		return
 	}
 
@@ -305,7 +305,7 @@ func (p *GenericProvider) filterConfigMap(cm *v1.ConfigMap) bool {
 }
 
 func (p *GenericProvider) filterIngress(ig *v1beta1.Ingress) bool {
-	if ig.Annotations[INGRESS_CLASS] == p.cfg.IngressClass {
+	if ig.Annotations[IngressClass] == p.cfg.IngressClass {
 		return false
 	}
 	return true
