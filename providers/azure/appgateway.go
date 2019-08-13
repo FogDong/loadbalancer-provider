@@ -23,6 +23,15 @@ const (
 	ResourceGroup     = "loadbalance.caicloud.io/azureResourceGroup"
 	IngressClass      = "kubernetes.io/ingress.class"
 	CompassProbes     = "compass-healthz-probe"
+	StatusSuccess     = "Success"
+	StatusError       = "Error"
+	AzureFrontendPort = 80
+	AzureTimeout      = 30
+	AzureInterval     = 30
+	AzureHealthCheck  = 3
+	AzureProbePath    = "/healthz"
+	AzureProbeHost    = "127.0.0.1"
+	HTTPProtocol      = "Http"
 )
 
 func getAzureAppGateway(c *client.Client, groupName, appGatewayName string) (*network.ApplicationGateway, error) {
@@ -162,7 +171,7 @@ func addAzureRule(c *client.Client, ag *network.ApplicationGateway, groupName, l
 	listenerID := getAGListenerID(IDPrefix, listenerName)
 	settingID := getAGSettingID(IDPrefix, settingName)
 	probeID := getAGProbeID(IDPrefix)
-	backendSetting := addAppGatewayBackendHTTPSettings(result, settingName, probeID, 80, 30)
+	backendSetting := addAppGatewayBackendHTTPSettings(result, settingName, probeID, AzureFrontendPort, AzureTimeout)
 	updated := addAppGatewayRequestRoutingRule(backendSetting, ruleName, backendID, listenerID, settingID)
 
 	_, err := c.AppGateway.CreateOrUpdate(context.TODO(), groupName, to.String(ag.Name), *updated)
@@ -177,7 +186,7 @@ func addAzureRule(c *client.Client, ag *network.ApplicationGateway, groupName, l
 func getFrontendPortID(ag *network.ApplicationGateway) string {
 	if ag.FrontendPorts != nil {
 		for _, port := range *ag.FrontendPorts {
-			if to.Int32(port.Port) == 80 {
+			if to.Int32(port.Port) == AzureFrontendPort {
 				return to.String(port.ID)
 			}
 		}
@@ -204,7 +213,7 @@ func ensureAppGatewayProbes(ag *network.ApplicationGateway) *network.Application
 			return ag
 		}
 	}
-	return createAppGatewayProbes(ag, CompassProbes, "/healthz", "127.0.0.1", 30, 30, 3)
+	return createAppGatewayProbes(ag, CompassProbes, AzureProbePath, AzureProbeHost, AzureInterval, AzureTimeout, AzureHealthCheck)
 }
 
 func createAppGatewayProbes(ag *network.ApplicationGateway, probeName, healthPath, host string, interval, timeout, unhealthy int32) *network.ApplicationGateway {
@@ -215,7 +224,7 @@ func createAppGatewayProbes(ag *network.ApplicationGateway, probeName, healthPat
 		Name: &probeName,
 		ApplicationGatewayProbePropertiesFormat: &network.ApplicationGatewayProbePropertiesFormat{
 			Path:               &healthPath,
-			Protocol:           "Http",
+			Protocol:           HTTPProtocol,
 			Host:               &host,
 			Interval:           &interval,
 			Timeout:            &timeout,
@@ -233,7 +242,7 @@ func addAppGatewayHttpListener(ag *network.ApplicationGateway, listenerName, hos
 	*ag.HTTPListeners = append(*ag.HTTPListeners, network.ApplicationGatewayHTTPListener{
 		Name: &listenerName,
 		ApplicationGatewayHTTPListenerPropertiesFormat: &network.ApplicationGatewayHTTPListenerPropertiesFormat{
-			Protocol: "Http",
+			Protocol: HTTPProtocol,
 			HostName: &hostname,
 			FrontendIPConfiguration: &network.SubResource{
 				ID: (*ag.ApplicationGatewayPropertiesFormat.FrontendIPConfigurations)[0].ID,
@@ -255,7 +264,7 @@ func addAppGatewayBackendHTTPSettings(ag *network.ApplicationGateway, settingNam
 		Name: &settingName,
 		ApplicationGatewayBackendHTTPSettingsPropertiesFormat: &network.ApplicationGatewayBackendHTTPSettingsPropertiesFormat{
 			Port:                &port,
-			Protocol:            "Http",
+			Protocol:            HTTPProtocol,
 			CookieBasedAffinity: "Disabled",
 			RequestTimeout:      &timeout,
 			Probe: &network.SubResource{
@@ -292,7 +301,7 @@ func addAppGatewayRequestRoutingRule(ag *network.ApplicationGateway, ruleName, b
 
 func deleteAllAzureRule(ag *network.ApplicationGateway, groupName string, rule map[string]string) *network.ApplicationGateway {
 	for k, v := range rule {
-		if v == "Success" {
+		if v == StatusSuccess {
 			ruleName := getAGRuleName(k)
 			listenerName := getAGListenerName(k)
 			settingName := getAGSettingName(k)
