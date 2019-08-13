@@ -360,14 +360,18 @@ func (l *AzureProvider) updateIngress(ingress []*v1beta1.Ingress, lb *lbapi.Load
 	}
 
 	rStatus := make(map[string]string)
-	if err := json.Unmarshal([]byte(strings.Replace(string(lb.Annotations[RuleStatus]), "'", "\"", -1)), &rStatus); err != nil {
-		log.Errorf("annotation rule status unmarshal failed %v", err)
-		return err
+	if lb.Annotations[RuleStatus] != "" {
+		if err := json.Unmarshal([]byte(strings.Replace(string(lb.Annotations[RuleStatus]), "\\\"", "\"", -1)), &rStatus); err != nil {
+			log.Errorf("annotation rule status unmarshal failed %v", err)
+			return err
+		}
 	}
 	rMsg := make(map[string]string)
-	if err := json.Unmarshal([]byte(strings.Replace(string(lb.Annotations[RuleMsg]), "'", "\"", -1)), &rMsg); err != nil {
-		log.Errorf("annotation rule msg unmarshal failed %v", err)
-		return err
+	if lb.Annotations[RuleMsg] != "" {
+		if err := json.Unmarshal([]byte(strings.Replace(string(lb.Annotations[RuleMsg]), "\\\"", "\"", -1)), &rMsg); err != nil {
+			log.Errorf("annotation rule msg unmarshal failed %v", err)
+			return err
+		}
 	}
 
 	// delete ingress
@@ -381,12 +385,12 @@ func (l *AzureProvider) updateIngress(ingress []*v1beta1.Ingress, lb *lbapi.Load
 			return err
 		}
 
-		err = deleteAzureRule(c, ag, lb.ObjectMeta.Annotations[ResourceGroup], deleteIngress.Name)
+		err := deleteAzureRule(c, ag, lb.ObjectMeta.Annotations[ResourceGroup], deleteIngress.Name)
 		if err != nil {
 			rStatus[deleteIngress.Name] = "Error"
 			mjson, _ := json.Marshal(rStatus)
 			lb.Annotations[RuleStatus] = string(mjson)
-			rMsg[deleteIngress.Name] = err.Error()
+			rMsg[deleteIngress.Name] = strings.Replace(err.Error(), "\"", "'", -1)
 			emjson, _ := json.Marshal(rMsg)
 			lb.Annotations[RuleMsg] = string(emjson)
 
@@ -420,14 +424,16 @@ func (l *AzureProvider) updateIngress(ingress []*v1beta1.Ingress, lb *lbapi.Load
 	}
 
 	// add ingress
-	listenerSet := make(map[string]struct{})
-	if ag.HTTPListeners != nil {
-		for _, listener := range *ag.HTTPListeners {
-			listenerSet[to.String(listener.Name)] = struct{}{}
-		}			
+	ruleSet := make(map[string]struct{})
+	if ag.RequestRoutingRules != nil {
+		for _, rule := range *ag.RequestRoutingRules {
+			if strings.Contains(to.String(rule.Name), "cps") {
+				ruleSet[to.String(rule.Name)] = struct{}{}
+			}
+		}
 	}
 	for _, ing := range ingress {
-		if _, ok := listenerSet[getAGListenerName(ing.Name)]; ok {
+		if _, ok := ruleSet[getAGRuleName(ing.Name)]; !ok {
 			log.Infof("adding ingress %s in azure", ing.Name)
 			rStatus[ing.Name] = "Adding"
 			mjson, _ := json.Marshal(rStatus)
@@ -443,8 +449,8 @@ func (l *AzureProvider) updateIngress(ingress []*v1beta1.Ingress, lb *lbapi.Load
 				mjson, _ := json.Marshal(rStatus)
 				lb.Annotations[RuleStatus] = string(mjson)
 
-				rMsg[ing.Name] = err.Error()
-				emjson, _ := json.Marshal(rStatus)
+				rMsg[ing.Name] = strings.Replace(err.Error(), "\"", "'", -1)
+				emjson, _ := json.Marshal(rMsg)
 				lb.Annotations[RuleMsg] = string(emjson)
 
 				patch := getAnnotationPatch(lb)
@@ -472,6 +478,7 @@ func (l *AzureProvider) updateIngress(ingress []*v1beta1.Ingress, lb *lbapi.Load
 		}
 
 		log.Infof("ingress %s already exists in azure rule", ing.Name)
+		l.setCacheAzureingressesNum(len(ruleSet))
 	}
 
 	return nil
@@ -735,7 +742,7 @@ func (l *AzureProvider) updateAzureAppGateway(lb *lbapi.LoadBalancer) error {
 		err = updateAppGatewayBackendPoolIP(c, nodeip, lb.ObjectMeta.Annotations[ResourceGroup], lb.ObjectMeta.Annotations[AppGatewayName], lb.Name)
 		if err != nil {
 			lb.Annotations[BackendpoolStatus] = "Error"
-			lb.Annotations[ErrorMsg] = err.Error()
+			lb.Annotations[ErrorMsg] = strings.Replace(err.Error(), "\"", "'", -1)
 			patch := getAnnotationPatch(lb)
 			if _, err := l.clientset.LoadbalanceV1alpha2().LoadBalancers(lb.Namespace).Patch(lb.Name, types.MergePatchType, []byte(patch)); err != nil {
 				return err
@@ -768,14 +775,18 @@ func (l *AzureProvider) deleteAzureAppGateway(lb *lbapi.LoadBalancer) error {
 	}
 
 	rStatus := make(map[string]string)
-	if err := json.Unmarshal([]byte(strings.Replace(string(lb.Annotations[RuleStatus]), "'", "\"", -1)), &rStatus); err != nil {
-		log.Errorf("annotation rule status unmarshal failed %v", err)
-		return err
+	if lb.Annotations[RuleStatus] != "" {
+		if err := json.Unmarshal([]byte(strings.Replace(string(lb.Annotations[RuleStatus]), "\\\"", "\"", -1)), &rStatus); err != nil {
+			log.Errorf("annotation rule status unmarshal failed %v", err)
+			return err
+		}
 	}
 	rMsg := make(map[string]string)
-	if err := json.Unmarshal([]byte(strings.Replace(string(lb.Annotations[RuleMsg]), "'", "\"", -1)), &rMsg); err != nil {
-		log.Errorf("annotation rule msg unmarshal failed %v", err)
-		return err
+	if lb.Annotations[RuleMsg] != "" {
+		if err := json.Unmarshal([]byte(strings.Replace(string(lb.Annotations[RuleMsg]), "\\\"", "\"", -1)), &rMsg); err != nil {
+			log.Errorf("annotation rule msg unmarshal failed %v", err)
+			return err
+		}
 	}
 
 	err = deleteAppGatewayBackendPool(c, l.oldResourceGroup, l.oldAppGateway, lb.Name, lb.Annotations[RuleStatus])
@@ -784,12 +795,12 @@ func (l *AzureProvider) deleteAzureAppGateway(lb *lbapi.LoadBalancer) error {
 		lb.Annotations[AppGatewayName] = l.oldAppGateway
 		lb.Annotations[ResourceGroup] = l.oldResourceGroup
 		lb.Annotations[BackendpoolStatus] = "Error"
-		lb.Annotations[ErrorMsg] = err.Error()
+		lb.Annotations[ErrorMsg] = strings.Replace(err.Error(), "\"", "'", -1)
 
 		for k, v := range rStatus {
 			if v == "Success" {
 				rStatus[k] = "Error"
-				rMsg[k] = err.Error()
+				rMsg[k] = strings.Replace(err.Error(), "\"", "'", -1)
 			}
 		}
 
@@ -852,23 +863,21 @@ func (l *AzureProvider) addAzureAppGateway(lb *lbapi.LoadBalancer, nodeip []netw
 
 	ing, _ := l.filterIngress(lb)
 	err = addAppGatewayBackendPool(c, nodeip, lb.ObjectMeta.Annotations[ResourceGroup], lb.ObjectMeta.Annotations[AppGatewayName], lb.Name, ing)
+
 	rStatus := make(map[string]string)
-	if err := json.Unmarshal([]byte(strings.Replace(string(lb.Annotations[RuleStatus]), "'", "\"", -1)), &rStatus); err != nil {
-		log.Errorf("annotation rule status unmarshal failed %v", err)
-		return err
-	}
 	rMsg := make(map[string]string)
-	if err := json.Unmarshal([]byte(strings.Replace(string(lb.Annotations[RuleMsg]), "'", "\"", -1)), &rMsg); err != nil {
-		log.Errorf("annotation rule msg unmarshal failed %v", err)
-		return err
-	}
+
 	if err != nil {
 		lb.Annotations[BackendpoolStatus] = "Error"
-		lb.Annotations[ErrorMsg] = err.Error()
+		lb.Annotations[ErrorMsg] = strings.Replace(err.Error(), "\"", "'", -1)
 		for _, ingress := range ing {
 			rStatus[ingress.Name] = "Error"
-			rMsg[ingress.Name] = err.Error()
+			rMsg[ingress.Name] = strings.Replace(err.Error(), "\"", "'", -1)
 		}
+		mjson, _ := json.Marshal(rStatus)
+		lb.Annotations[RuleStatus] = string(mjson)
+		emjson, _ := json.Marshal(rMsg)
+		lb.Annotations[RuleMsg] = string(emjson)
 		patch := getAnnotationPatch(lb)
 		if _, err := l.clientset.LoadbalanceV1alpha2().LoadBalancers(lb.Namespace).Patch(lb.Name, types.MergePatchType, []byte(patch)); err != nil {
 			return err
@@ -883,6 +892,10 @@ func (l *AzureProvider) addAzureAppGateway(lb *lbapi.LoadBalancer, nodeip []netw
 		rStatus[ingress.Name] = "Success"
 		rMsg[ingress.Name] = ""
 	}
+	mjson, _ := json.Marshal(rStatus)
+	lb.Annotations[RuleStatus] = string(mjson)
+	emjson, _ := json.Marshal(rMsg)
+	lb.Annotations[RuleMsg] = string(emjson)
 	patch := getAnnotationPatch(lb)
 	if _, err := l.clientset.LoadbalanceV1alpha2().LoadBalancers(lb.Namespace).Patch(lb.Name, types.MergePatchType, []byte(patch)); err != nil {
 		return err
