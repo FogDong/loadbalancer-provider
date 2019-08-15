@@ -34,6 +34,7 @@ const (
 	AzureProbeHost    = "127.0.0.1"
 	HTTPProtocol      = "Http"
 	OneRuleMsg        = `%s 不能被删除或更新，请保证该 AppGateway 中至少有一条以上的规则再进行删除或更新操作！`
+	OnlyRuleMsg       = `当 AppGateway 被删除或更新时，会取消关联平台所有规则，请至少保证 %s 中有一条以上的规则再进行删除或更新操作！`
 )
 
 func getAzureAppGateway(c *client.Client, groupName, appGatewayName string) (*network.ApplicationGateway, error) {
@@ -124,13 +125,13 @@ func deleteAppGatewayBackendPool(c *client.Client, groupName, agName, lb, rule s
 		}
 		if len(rStatus) == len(*ag.RequestRoutingRules) {
 			only := true
-			for _,rule := range *ag.RequestRoutingRules {
+			for _, rule := range *ag.RequestRoutingRules {
 				if _, ok := rStatus[getIngressName(to.String(rule.Name))]; !ok {
 					only = false
 				}
 			}
 			if only {
-				return errors.New(fmt.Sprintf(OneRuleMsg, agName))
+				return errors.New(fmt.Sprintf(OnlyRuleMsg, agName))
 			}
 		}
 		ag = deleteAllAzureRule(ag, groupName, rStatus)
@@ -431,6 +432,6 @@ func getAGProbeID(prefix string) string {
 	return prefix + "/probes/" + CompassProbes
 }
 
-func getIngressName(rule string) string{
+func getIngressName(rule string) string {
 	return strings.Split(rule, "-cps-rule")[0]
 }
