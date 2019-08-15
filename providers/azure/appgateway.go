@@ -26,6 +26,8 @@ const (
 	CompassProbes     = "compass-healthz-probe"
 	StatusSuccess     = "Success"
 	StatusError       = "Error"
+	StatusDeleting    = "Deleting"
+	StatusUpdating    = "Updating"
 	AzureFrontendPort = 80
 	AzureTimeout      = 30
 	AzureInterval     = 30
@@ -303,7 +305,7 @@ func addAppGatewayRequestRoutingRule(ag *network.ApplicationGateway, ruleName, b
 
 func deleteAllAzureRule(ag *network.ApplicationGateway, groupName string, rule map[string]string) *network.ApplicationGateway {
 	for k, v := range rule {
-		if v == StatusSuccess {
+		if v == StatusDeleting {
 			ruleName := getAGRuleName(k)
 			listenerName := getAGListenerName(k)
 			settingName := getAGSettingName(k)
