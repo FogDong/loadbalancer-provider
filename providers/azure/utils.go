@@ -465,8 +465,8 @@ func convertMap(ruleStatus, ruleMsg string) (map[string]string, map[string]strin
 		}
 	}
 	rMsg := make(map[string]string)
-	if RuleMsg != "" {
-		if err := json.Unmarshal([]byte(strings.Replace(RuleMsg, "\\\"", "\"", -1)), &rMsg); err != nil {
+	if ruleMsg != "" {
+		if err := json.Unmarshal([]byte(strings.Replace(ruleMsg, "\\\"", "\"", -1)), &rMsg); err != nil {
 			log.Errorf("annotation rule msg unmarshal failed %v", err)
 			return nil, nil, err
 		}
