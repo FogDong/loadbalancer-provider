@@ -130,10 +130,11 @@ func deleteAppGatewayBackendPool(c *client.Client, groupName, agName, lb, rule s
 			for _, rule := range *ag.RequestRoutingRules {
 				if _, ok := rStatus[getIngressName(to.String(rule.Name))]; !ok {
 					only = false
+					break
 				}
 			}
 			if only {
-				return errors.New(fmt.Sprintf(OnlyRuleMsg, agName))
+				return fmt.Errorf(OnlyRuleMsg, agName)
 			}
 		}
 		ag = deleteAllAzureRule(ag, groupName, rStatus)
